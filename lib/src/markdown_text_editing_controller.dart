@@ -100,6 +100,18 @@ class MarkdownEditingController extends TextEditingController {
           color: Colors.blueAccent,
         );
       }, type: _PatternType.header),
+      // Unordered List
+      _MarkdownPattern(
+        RegExp(r'^([ \t]*)([*+-])([ \t]+)', multiLine: true),
+        (match) => const TextStyle(fontWeight: FontWeight.w500),
+        type: _PatternType.list,
+      ),
+      // Ordered List
+      _MarkdownPattern(
+        RegExp(r'^([ \t]*)(\d+\.)([ \t]+)', multiLine: true),
+        (match) => const TextStyle(fontWeight: FontWeight.w500),
+        type: _PatternType.list,
+      ),
       // Bold **text**
       _MarkdownPattern(
         RegExp(r'(\*\*)(.+?)(\*\*)'),
@@ -194,6 +206,35 @@ class MarkdownEditingController extends TextEditingController {
             ),
           );
           matchSpans.add(TextSpan(text: content, style: combinedStyle));
+        } else if (pattern.type == _PatternType.list) {
+          // Group 1: Leading indent, Group 2: Bullet/Number, Group 3: Space
+          final indent = match.group(1)!;
+          final bulletOrNumber = match.group(2)!;
+          final space = match.group(3)!;
+          // No content group, content is handled by subsequent text processing
+
+          matchSpans.add(TextSpan(text: indent, style: defaultStyle));
+
+          if (isOnFocusedLine || _focusedLine == null) {
+            // Render full syntax when focused or no focus line set
+            matchSpans.add(
+              TextSpan(
+                text: bulletOrNumber + space,
+                style: combinedStyle.copyWith(color: Colors.blueAccent),
+              ),
+            );
+          } else {
+            // Render styled replacement when not focused
+            final replacement = RegExp(r'^\d+\.$').hasMatch(bulletOrNumber)
+                ? bulletOrNumber // Keep number for ordered lists
+                : '•'; // Bullet for unordered
+            matchSpans.add(
+              TextSpan(
+                text: replacement + space,
+                style: combinedStyle.copyWith(fontWeight: FontWeight.bold),
+              ),
+            );
+          }
         } else if (pattern.type == _PatternType.thematicBreak) {
           if (isOnFocusedLine || _focusedLine == null) {
             matchSpans.add(
@@ -313,7 +354,7 @@ class MarkdownEditingController extends TextEditingController {
   }
 }
 
-enum _PatternType { header, inline, thematicBreak }
+enum _PatternType { header, list, inline, thematicBreak }
 
 class _MarkdownPattern {
   final RegExp exp;
