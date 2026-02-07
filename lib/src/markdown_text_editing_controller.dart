@@ -71,11 +71,15 @@ class MarkdownEditingController extends TextEditingController {
     required bool withComposing,
   }) {
     style ??= const TextStyle();
-    return _parseMarkdown(value.text, style);
+    return _parseMarkdown(value.text, style, context);
   }
 
-  TextSpan _parseMarkdown(String text, TextStyle defaultStyle) {
-    final List<TextSpan> spans = [];
+  TextSpan _parseMarkdown(
+    String text,
+    TextStyle defaultStyle,
+    BuildContext context,
+  ) {
+    final List<InlineSpan> spans = [];
 
     // Get the focused line range if we have a focused line
     (int start, int end)? focusedLineRange;
@@ -146,6 +150,16 @@ class MarkdownEditingController extends TextEditingController {
         // But the regex captures start/content/end groups
         type: _PatternType.inline,
       ),
+      // Thematic break
+      _MarkdownPattern(
+        RegExp(
+          r'^ {0,3}((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$',
+          multiLine: true,
+        ),
+        (match) => const TextStyle(color: Colors.grey),
+        type: _PatternType.thematicBreak,
+        priority: 1,
+      ),
     ];
 
     // Collect all matches
@@ -159,7 +173,7 @@ class MarkdownEditingController extends TextEditingController {
             match.start < focusedLineRange.$2;
 
         final rangeStyle = pattern.styleBuilder(match);
-        final List<TextSpan> matchSpans = [];
+        final List<InlineSpan> matchSpans = [];
 
         // TextStyle to start with (merging default + pattern style)
         final combinedStyle = defaultStyle.merge(rangeStyle);
@@ -180,6 +194,30 @@ class MarkdownEditingController extends TextEditingController {
             ),
           );
           matchSpans.add(TextSpan(text: content, style: combinedStyle));
+        } else if (pattern.type == _PatternType.thematicBreak) {
+          if (isOnFocusedLine || _focusedLine == null) {
+            matchSpans.add(
+              TextSpan(
+                text: match.group(0),
+                style: combinedStyle.copyWith(color: Colors.grey),
+              ),
+            );
+          } else {
+            // Use Unicode horizontal line characters instead of WidgetSpan
+            // This preserves text flow and newline handling
+            final lineLength = match.group(0)!.length;
+            final lineChars =
+                '─' * lineLength; // Keep same length for cursor sync
+            matchSpans.add(
+              TextSpan(
+                text: lineChars,
+                style: combinedStyle.copyWith(
+                  color: Colors.grey,
+                  letterSpacing: 0,
+                ),
+              ),
+            );
+          }
         } else if (pattern.type == _PatternType.inline) {
           // Group 1: Prefix, Group 2: Content, Group 3: Suffix
           // Note: The regexes for inline need to capture 3 groups: prefix, content, suffix
@@ -217,15 +255,21 @@ class MarkdownEditingController extends TextEditingController {
           }
         }
 
-        ranges.add(_MatchRange(match.start, match.end, matchSpans));
+        ranges.add(
+          _MatchRange(match.start, match.end, matchSpans, pattern.priority),
+        );
       }
     }
 
     // Sort by start position, then by length (longer matches first)
+    // Sort by start position, then by length (longer matches first), then by priority
     ranges.sort((a, b) {
       final startCompare = a.start.compareTo(b.start);
       if (startCompare != 0) return startCompare;
-      return b.end.compareTo(a.end);
+      final lengthCompare = b.end.compareTo(a.end);
+      if (lengthCompare != 0) return lengthCompare;
+      // Higher priority first
+      return b.priority.compareTo(a.priority);
     });
 
     // Remove overlapping ranges (keep first/longer)
@@ -269,24 +313,27 @@ class MarkdownEditingController extends TextEditingController {
   }
 }
 
-enum _PatternType { header, inline }
+enum _PatternType { header, inline, thematicBreak }
 
 class _MarkdownPattern {
   final RegExp exp;
   final TextStyle Function(Match match) styleBuilder;
   final _PatternType type;
+  final int priority;
 
   _MarkdownPattern(
     this.exp,
     this.styleBuilder, {
     this.type = _PatternType.inline,
+    this.priority = 0,
   });
 }
 
 class _MatchRange {
   final int start;
   final int end;
-  final List<TextSpan> spans;
+  final List<InlineSpan> spans;
+  final int priority;
 
-  _MatchRange(this.start, this.end, this.spans);
+  _MatchRange(this.start, this.end, this.spans, this.priority);
 }
