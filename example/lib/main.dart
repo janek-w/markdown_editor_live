@@ -43,6 +43,22 @@ This is a **live** markdown editor.
 - `Inline code`
 - Headers
 
+## Nested Lists (Try pressing Tab!)
+
+- Level 1 item
+  - Nested item (press Tab to indent)
+  - Another nested item
+- Back to level 1
+  - Another nested item
+    - Deeply nested item
+
+## Ordered Lists
+
+1. First item
+   1. Nested ordered item
+   2. Another nested item
+2. Second item
+
 ```
 Block code
 ```
