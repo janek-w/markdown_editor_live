@@ -1,4 +1,4 @@
-# Flutter Markdown Editor Live
+# Markdown Editor Live
 
 A simple WYSIWYG-style markdown editor for Flutter. It provides live syntax highlighting for markdown while keeping the raw text editable.
 
@@ -14,7 +14,7 @@ Add this package to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_markdown_editor_live: ^0.0.1
+  markdown_editor_live: ^0.0.1
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ dependencies:
 Import the package:
 
 ```dart
-import 'package:flutter_markdown_editor_live/flutter_markdown_editor_live.dart';
+import 'package:markdown_editor_live/markdown_editor_live.dart';
 ```
 
 Use the `MarkdownEditor` widget:

@@ -16,14 +16,12 @@ class MarkdownEditingController extends TextEditingController {
     }
   }
 
-  /// Updates the focused line based on the current cursor position.
   void updateFocusedLineFromSelection() {
     if (selection.isValid && selection.baseOffset >= 0) {
       focusedLine = _getLineNumber(selection.baseOffset);
     }
   }
 
-  /// Returns the line number (0-indexed) for a given text offset.
   int _getLineNumber(int offset) {
     final text = value.text;
     int line = 0;
@@ -35,7 +33,6 @@ class MarkdownEditingController extends TextEditingController {
     return line;
   }
 
-  /// Returns the start and end offsets for a given line number (0-indexed).
   (int start, int end) _getLineRange(int lineNumber) {
     final text = value.text;
     int currentLine = 0;
@@ -43,7 +40,6 @@ class MarkdownEditingController extends TextEditingController {
 
     for (int i = 0; i < text.length; i++) {
       if (currentLine == lineNumber) {
-        // Find the end of this line
         int lineEnd = i;
         while (lineEnd < text.length && text[lineEnd] != '\n') {
           lineEnd++;
@@ -56,7 +52,6 @@ class MarkdownEditingController extends TextEditingController {
       }
     }
 
-    // Last line (no trailing newline)
     if (currentLine == lineNumber) {
       return (lineStart, text.length);
     }
@@ -81,7 +76,6 @@ class MarkdownEditingController extends TextEditingController {
   ) {
     final List<InlineSpan> spans = [];
 
-    // Get the focused line range if we have a focused line
     (int start, int end)? focusedLineRange;
     if (_focusedLine != null) {
       focusedLineRange = _getLineRange(_focusedLine!);
@@ -226,8 +220,8 @@ class MarkdownEditingController extends TextEditingController {
           } else {
             // Render styled replacement when not focused
             final replacement = RegExp(r'^\d+\.$').hasMatch(bulletOrNumber)
-                ? bulletOrNumber // Keep number for ordered lists
-                : '•'; // Bullet for unordered
+                ? bulletOrNumber
+                : '•';
             matchSpans.add(
               TextSpan(
                 text: replacement + space,
@@ -247,8 +241,7 @@ class MarkdownEditingController extends TextEditingController {
             // Use Unicode horizontal line characters instead of WidgetSpan
             // This preserves text flow and newline handling
             final lineLength = match.group(0)!.length;
-            final lineChars =
-                '─' * lineLength; // Keep same length for cursor sync
+            final lineChars = '─' * lineLength;
             matchSpans.add(
               TextSpan(
                 text: lineChars,
@@ -303,7 +296,6 @@ class MarkdownEditingController extends TextEditingController {
     }
 
     // Sort by start position, then by length (longer matches first)
-    // Sort by start position, then by length (longer matches first), then by priority
     ranges.sort((a, b) {
       final startCompare = a.start.compareTo(b.start);
       if (startCompare != 0) return startCompare;
@@ -327,7 +319,6 @@ class MarkdownEditingController extends TextEditingController {
     int textCursor = 0; // Tracks position in original text
 
     for (final range in filteredRanges) {
-      // Add unstyled text before this range
       if (range.start > textCursor) {
         spans.add(
           TextSpan(

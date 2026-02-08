@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_markdown_editor_live/src/markdown_text_editing_controller.dart';
+import 'package:markdown_editor_live/src/markdown_text_editing_controller.dart';
 
 void main() {
   testWidgets('List rendering verification', (WidgetTester tester) async {
