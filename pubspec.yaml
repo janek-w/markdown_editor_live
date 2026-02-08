@@ -1,7 +1,7 @@
 name: markdown_editor_live
 description: "A simple WYSIWYG markdown editor widget for Flutter"
 version: 0.1.0
-homepage:
+repository: https://github.com/janek-w/markdown_editor_live
 
 environment:
   sdk: ^3.9.2
