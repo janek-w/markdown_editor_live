@@ -1,29 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-/// Tracks information about inserted spacing newlines for an image
-class _ImageSpacingRegion {
-  /// The source text offset where the image markdown starts
-  final int sourceStart;
-  /// The source text offset where the image markdown ends
-  final int sourceEnd;
-  /// Number of newlines inserted before the image
-  final int newlinesBefore;
-  /// Number of newlines inserted after the image
-  final int newlinesAfter;
-  /// The display offset where the image starts (including inserted newlines)
-  int get displayStart => sourceStart + newlinesBefore;
-  /// The display offset where the image ends (including inserted newlines)
-  int get displayEnd => sourceEnd + newlinesBefore;
-
-  _ImageSpacingRegion({
-    required this.sourceStart,
-    required this.sourceEnd,
-    required this.newlinesBefore,
-    required this.newlinesAfter,
-  });
-}
-
 class MarkdownEditingController extends TextEditingController {
   MarkdownEditingController({super.text, this.onLinkTap, this.onImageTap});
 
@@ -36,15 +13,9 @@ class MarkdownEditingController extends TextEditingController {
   /// Active gesture recognizers for links, disposed on each rebuild.
   final List<GestureRecognizer> _recognizers = [];
 
-  /// Tracks inserted newlines for images in the current text
-  List<_ImageSpacingRegion> _imageSpacingRegions = [];
-
   /// The currently focused line number (0-indexed).
   /// When set, syntax markers are hidden on all other lines.
   int? _focusedLine;
-
-  /// Image display height in pixels
-  static const double imageHeight = 200.0;
 
   int? get focusedLine => _focusedLine;
 
@@ -57,111 +28,8 @@ class MarkdownEditingController extends TextEditingController {
 
   void updateFocusedLineFromSelection() {
     if (selection.isValid && selection.baseOffset >= 0) {
-      // Convert display offset to source offset before calculating line
-      final sourceOffset = displayToSource(selection.baseOffset);
-      focusedLine = _getLineNumber(sourceOffset, _sourceText);
+      focusedLine = _getLineNumber(selection.baseOffset, text);
     }
-  }
-
-  /// Get the source text (without inserted newlines)
-  String get _sourceText => super.text;
-
-  /// Override text to return display text (with inserted newlines)
-  @override
-  String get text {
-    return _sourceToDisplayText(_sourceText);
-  }
-
-  /// Convert source text offset to display text offset
-  int sourceToDisplay(int sourceOffset) {
-    int offset = sourceOffset;
-    for (final region in _imageSpacingRegions) {
-      if (sourceOffset > region.sourceStart) {
-        offset += region.newlinesBefore;
-      }
-      if (sourceOffset >= region.sourceEnd) {
-        offset += region.newlinesAfter;
-      }
-    }
-    return offset;
-  }
-
-  /// Convert display text offset to source text offset
-  int displayToSource(int displayOffset) {
-    int offset = displayOffset;
-    for (final region in _imageSpacingRegions) {
-      // If we're in the "newlines before" region, snap to image start
-      if (displayOffset >= region.sourceStart &&
-          displayOffset < region.sourceStart + region.newlinesBefore) {
-        return region.sourceStart;
-      }
-      // If we're in the "newlines after" region, snap to image end
-      if (displayOffset >= region.sourceEnd + region.newlinesBefore &&
-          displayOffset < region.sourceEnd + region.newlinesBefore + region.newlinesAfter) {
-        return region.sourceEnd;
-      }
-      // Subtract inserted newlines for positions after them
-      if (displayOffset >= region.sourceStart + region.newlinesBefore) {
-        offset -= region.newlinesBefore;
-      }
-      if (displayOffset >= region.sourceEnd + region.newlinesBefore + region.newlinesAfter) {
-        offset -= region.newlinesAfter;
-      }
-    }
-    return offset;
-  }
-
-  /// Transform source text to display text by inserting newlines around images
-  String _sourceToDisplayText(String sourceText) {
-    // Find all image patterns
-    final imagePattern = RegExp(r'!\[([^\]]*?)\]\(([^\)]+)\)');
-    final matches = imagePattern.allMatches(sourceText).toList();
-
-    if (matches.isEmpty) {
-      _imageSpacingRegions = [];
-      return sourceText;
-    }
-
-    // Calculate newlines needed based on image height and font size
-    const imageHeight = MarkdownEditingController.imageHeight;
-    const fontSize = 16.0; // Default font size
-    final lineHeight = fontSize * 1.4;
-    final newlinesNeeded = (imageHeight / lineHeight).ceil();
-
-    // Build display text and track regions
-    final buffer = StringBuffer();
-    final regions = <_ImageSpacingRegion>[];
-    int lastEnd = 0;
-
-    for (final match in matches) {
-      // Add text before this image
-      buffer.write(sourceText.substring(lastEnd, match.start));
-
-      // Insert newlines before image
-      buffer.write('\n' * newlinesNeeded);
-
-      // Add the image markdown
-      buffer.write(match.group(0));
-
-      // Insert newlines after image
-      buffer.write('\n' * newlinesNeeded);
-
-      // Track the region
-      regions.add(_ImageSpacingRegion(
-        sourceStart: match.start,
-        sourceEnd: match.end,
-        newlinesBefore: newlinesNeeded,
-        newlinesAfter: newlinesNeeded,
-      ));
-
-      lastEnd = match.end;
-    }
-
-    // Add remaining text
-    buffer.write(sourceText.substring(lastEnd));
-
-    _imageSpacingRegions = regions;
-    return buffer.toString();
   }
 
   int _getLineNumber(int offset, String text) {
@@ -220,7 +88,7 @@ class MarkdownEditingController extends TextEditingController {
   }) {
     _disposeRecognizers();
     style ??= const TextStyle();
-    return _parseMarkdown(_sourceText, style, context);
+    return _parseMarkdown(text, style, context);
   }
 
   TextSpan _parseMarkdown(
@@ -440,79 +308,78 @@ class MarkdownEditingController extends TextEditingController {
             );
             matchSpans.add(TextSpan(text: closeParen, style: imageStyle));
           } else {
-            // WYSIWYG: hide all syntax, render actual image with spacing
-            matchSpans.add(
-              TextSpan(text: exclamationBracket, style: hiddenStyle),
-            );
-            matchSpans.add(TextSpan(text: altText, style: hiddenStyle));
-            matchSpans.add(TextSpan(text: middle, style: hiddenStyle));
-            matchSpans.add(TextSpan(text: url, style: hiddenStyle));
-            matchSpans.add(TextSpan(text: closeParen, style: hiddenStyle));
+            // WYSIWYG: hide all syntax, render actual image.
+            //
+            // IMPORTANT: WidgetSpan occupies exactly 1 character position in
+            // the visual layout. To keep cursor positions aligned with the
+            // source text, the WidgetSpan REPLACES the "!" character (1 pos)
+            // rather than being added as an extra span. All remaining source
+            // characters are rendered as hidden (fontSize: 0) TextSpans.
 
-            TapGestureRecognizer? imageRecognizer;
-            if (onImageTap != null) {
-              imageRecognizer = TapGestureRecognizer()
-                ..onTap = () => onImageTap!(url);
-              _recognizers.add(imageRecognizer);
-            }
-
-            // Calculate newlines needed based on image height and font size
-            const imageHeight = MarkdownEditingController.imageHeight;
+            // Calculate dynamic image height based on font size (e.g. 5 lines)
             final fontSize = defaultStyle.fontSize ?? 16.0;
             final lineHeight = fontSize * 1.4;
-            final newlinesNeeded = (imageHeight / lineHeight).ceil();
+            final targetHeight = lineHeight * 5;
 
-            // Add newlines BEFORE widget to create space above
-            matchSpans.add(
-              TextSpan(text: '\n' * newlinesNeeded, style: defaultStyle),
-            );
-
+            // WidgetSpan replaces "!" (1 source char -> 1 widget position)
             matchSpans.add(
               WidgetSpan(
                 alignment: PlaceholderAlignment.middle,
                 child: GestureDetector(
                   onTap: onImageTap != null ? () => onImageTap!(url) : null,
-                  child: SizedBox(
-                    height: imageHeight,
-                    width: 300,
-                    child: Image.network(
-                      url,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return SizedBox(
-                          height: imageHeight,
-                          width: 300,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.broken_image,
-                                size: 16,
-                                color: Colors.grey,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: SizedBox(
+                      height: targetHeight,
+                      child: Image.network(
+                        url,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return SizedBox(
+                            height: targetHeight,
+                            width: targetHeight,
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.broken_image,
+                                    size: 16,
+                                    color: Colors.grey,
+                                  ),
+                                  if (altText.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      altText,
+                                      style: defaultStyle.copyWith(
+                                        color: Colors.grey,
+                                        fontSize: 10,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ],
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                altText.isNotEmpty ? altText : 'Image',
-                                style: defaultStyle.copyWith(
-                                  color: Colors.grey,
-                                  fontStyle: FontStyle.italic,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
               ),
             );
 
-            // Add newlines AFTER widget to create space below
-            matchSpans.add(
-              TextSpan(text: '\n' * newlinesNeeded, style: defaultStyle),
-            );
+            // Remaining source characters rendered hidden (fontSize: 0).
+            // "[" is the second char of exclamationBracket "![".
+            matchSpans.add(TextSpan(text: "[", style: hiddenStyle));
+            matchSpans.add(TextSpan(text: altText, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: middle, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: url, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: closeParen, style: hiddenStyle));
           }
         } else if (pattern.type == _PatternType.link) {
           // Groups: 1=[, 2=text, 3=](, 4=url, 5=)
