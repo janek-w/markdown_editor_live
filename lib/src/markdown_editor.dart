@@ -5,6 +5,8 @@ import 'markdown_text_editing_controller.dart';
 class MarkdownEditor extends StatefulWidget {
   final String? initialValue;
   final ValueChanged<String>? onChanged;
+  final void Function(String url)? onLinkTap;
+  final void Function(String url)? onImageTap;
   final TextStyle? style;
   final InputDecoration? decoration;
   final bool useSoftTabs;
@@ -14,6 +16,8 @@ class MarkdownEditor extends StatefulWidget {
     super.key,
     this.initialValue,
     this.onChanged,
+    this.onLinkTap,
+    this.onImageTap,
     this.style,
     this.decoration,
     this.useSoftTabs = true,
@@ -31,7 +35,11 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
   @override
   void initState() {
     super.initState();
-    _controller = MarkdownEditingController(text: widget.initialValue);
+    _controller = MarkdownEditingController(
+      text: widget.initialValue,
+      onLinkTap: widget.onLinkTap,
+      onImageTap: widget.onImageTap,
+    );
     _controller.addListener(_onSelectionChanged);
     _focusNode = FocusNode();
   }

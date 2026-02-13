@@ -1,11 +1,50 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+/// Tracks information about inserted spacing newlines for an image
+class _ImageSpacingRegion {
+  /// The source text offset where the image markdown starts
+  final int sourceStart;
+  /// The source text offset where the image markdown ends
+  final int sourceEnd;
+  /// Number of newlines inserted before the image
+  final int newlinesBefore;
+  /// Number of newlines inserted after the image
+  final int newlinesAfter;
+  /// The display offset where the image starts (including inserted newlines)
+  int get displayStart => sourceStart + newlinesBefore;
+  /// The display offset where the image ends (including inserted newlines)
+  int get displayEnd => sourceEnd + newlinesBefore;
+
+  _ImageSpacingRegion({
+    required this.sourceStart,
+    required this.sourceEnd,
+    required this.newlinesBefore,
+    required this.newlinesAfter,
+  });
+}
+
 class MarkdownEditingController extends TextEditingController {
-  MarkdownEditingController({super.text});
+  MarkdownEditingController({super.text, this.onLinkTap, this.onImageTap});
+
+  /// Called when a link is tapped. Receives the URL as a string.
+  final void Function(String url)? onLinkTap;
+
+  /// Called when an image is tapped. Receives the image URL as a string.
+  final void Function(String url)? onImageTap;
+
+  /// Active gesture recognizers for links, disposed on each rebuild.
+  final List<GestureRecognizer> _recognizers = [];
+
+  /// Tracks inserted newlines for images in the current text
+  List<_ImageSpacingRegion> _imageSpacingRegions = [];
 
   /// The currently focused line number (0-indexed).
   /// When set, syntax markers are hidden on all other lines.
   int? _focusedLine;
+
+  /// Image display height in pixels
+  static const double imageHeight = 200.0;
 
   int? get focusedLine => _focusedLine;
 
@@ -18,12 +57,114 @@ class MarkdownEditingController extends TextEditingController {
 
   void updateFocusedLineFromSelection() {
     if (selection.isValid && selection.baseOffset >= 0) {
-      focusedLine = _getLineNumber(selection.baseOffset);
+      // Convert display offset to source offset before calculating line
+      final sourceOffset = displayToSource(selection.baseOffset);
+      focusedLine = _getLineNumber(sourceOffset, _sourceText);
     }
   }
 
-  int _getLineNumber(int offset) {
-    final text = value.text;
+  /// Get the source text (without inserted newlines)
+  String get _sourceText => super.text;
+
+  /// Override text to return display text (with inserted newlines)
+  @override
+  String get text {
+    return _sourceToDisplayText(_sourceText);
+  }
+
+  /// Convert source text offset to display text offset
+  int sourceToDisplay(int sourceOffset) {
+    int offset = sourceOffset;
+    for (final region in _imageSpacingRegions) {
+      if (sourceOffset > region.sourceStart) {
+        offset += region.newlinesBefore;
+      }
+      if (sourceOffset >= region.sourceEnd) {
+        offset += region.newlinesAfter;
+      }
+    }
+    return offset;
+  }
+
+  /// Convert display text offset to source text offset
+  int displayToSource(int displayOffset) {
+    int offset = displayOffset;
+    for (final region in _imageSpacingRegions) {
+      // If we're in the "newlines before" region, snap to image start
+      if (displayOffset >= region.sourceStart &&
+          displayOffset < region.sourceStart + region.newlinesBefore) {
+        return region.sourceStart;
+      }
+      // If we're in the "newlines after" region, snap to image end
+      if (displayOffset >= region.sourceEnd + region.newlinesBefore &&
+          displayOffset < region.sourceEnd + region.newlinesBefore + region.newlinesAfter) {
+        return region.sourceEnd;
+      }
+      // Subtract inserted newlines for positions after them
+      if (displayOffset >= region.sourceStart + region.newlinesBefore) {
+        offset -= region.newlinesBefore;
+      }
+      if (displayOffset >= region.sourceEnd + region.newlinesBefore + region.newlinesAfter) {
+        offset -= region.newlinesAfter;
+      }
+    }
+    return offset;
+  }
+
+  /// Transform source text to display text by inserting newlines around images
+  String _sourceToDisplayText(String sourceText) {
+    // Find all image patterns
+    final imagePattern = RegExp(r'!\[([^\]]*?)\]\(([^\)]+)\)');
+    final matches = imagePattern.allMatches(sourceText).toList();
+
+    if (matches.isEmpty) {
+      _imageSpacingRegions = [];
+      return sourceText;
+    }
+
+    // Calculate newlines needed based on image height and font size
+    const imageHeight = MarkdownEditingController.imageHeight;
+    const fontSize = 16.0; // Default font size
+    final lineHeight = fontSize * 1.4;
+    final newlinesNeeded = (imageHeight / lineHeight).ceil();
+
+    // Build display text and track regions
+    final buffer = StringBuffer();
+    final regions = <_ImageSpacingRegion>[];
+    int lastEnd = 0;
+
+    for (final match in matches) {
+      // Add text before this image
+      buffer.write(sourceText.substring(lastEnd, match.start));
+
+      // Insert newlines before image
+      buffer.write('\n' * newlinesNeeded);
+
+      // Add the image markdown
+      buffer.write(match.group(0));
+
+      // Insert newlines after image
+      buffer.write('\n' * newlinesNeeded);
+
+      // Track the region
+      regions.add(_ImageSpacingRegion(
+        sourceStart: match.start,
+        sourceEnd: match.end,
+        newlinesBefore: newlinesNeeded,
+        newlinesAfter: newlinesNeeded,
+      ));
+
+      lastEnd = match.end;
+    }
+
+    // Add remaining text
+    buffer.write(sourceText.substring(lastEnd));
+
+    _imageSpacingRegions = regions;
+    return buffer.toString();
+  }
+
+  int _getLineNumber(int offset, String text) {
     int line = 0;
     for (int i = 0; i < offset && i < text.length; i++) {
       if (text[i] == '\n') {
@@ -33,8 +174,7 @@ class MarkdownEditingController extends TextEditingController {
     return line;
   }
 
-  (int start, int end) _getLineRange(int lineNumber) {
-    final text = value.text;
+  (int start, int end) _getLineRange(int lineNumber, String text) {
     int currentLine = 0;
     int lineStart = 0;
 
@@ -60,13 +200,27 @@ class MarkdownEditingController extends TextEditingController {
   }
 
   @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  void _disposeRecognizers() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
   TextSpan buildTextSpan({
     required BuildContext context,
     TextStyle? style,
     required bool withComposing,
   }) {
+    _disposeRecognizers();
     style ??= const TextStyle();
-    return _parseMarkdown(value.text, style, context);
+    return _parseMarkdown(_sourceText, style, context);
   }
 
   TextSpan _parseMarkdown(
@@ -76,9 +230,10 @@ class MarkdownEditingController extends TextEditingController {
   ) {
     final List<InlineSpan> spans = [];
 
+    // Calculate focused line range in SOURCE text
     (int start, int end)? focusedLineRange;
     if (_focusedLine != null) {
-      focusedLineRange = _getLineRange(_focusedLine!);
+      focusedLineRange = _getLineRange(_focusedLine!, text);
     }
 
     // Pattern definitions
@@ -152,9 +307,22 @@ class MarkdownEditingController extends TextEditingController {
           fontFamily: 'monospace',
           backgroundColor: Colors.grey.shade200.withValues(alpha: 0.5),
         ),
-        // Code blocks are usually multiline, treating as inline wrapper for now
-        // But the regex captures start/content/end groups
         type: _PatternType.inline,
+      ),
+      // Images ![alt](url) — must come before links
+      _MarkdownPattern(
+        RegExp(r'(!\[)([^\]]*?)(\]\()([^\)]+)(\))'),
+        (match) => const TextStyle(color: Colors.teal),
+        type: _PatternType.image,
+      ),
+      // Links [text](url)
+      _MarkdownPattern(
+        RegExp(r'(\[)([^\]]+)(\]\()([^\)]+)(\))'),
+        (match) => const TextStyle(
+          color: Colors.blue,
+          decoration: TextDecoration.underline,
+        ),
+        type: _PatternType.link,
       ),
       // Thematic break
       _MarkdownPattern(
@@ -205,12 +373,10 @@ class MarkdownEditingController extends TextEditingController {
           final indent = match.group(1)!;
           final bulletOrNumber = match.group(2)!;
           final space = match.group(3)!;
-          // No content group, content is handled by subsequent text processing
 
           matchSpans.add(TextSpan(text: indent, style: defaultStyle));
 
           if (isOnFocusedLine || _focusedLine == null) {
-            // Render full syntax when focused or no focus line set
             matchSpans.add(
               TextSpan(
                 text: bulletOrNumber + space,
@@ -218,7 +384,6 @@ class MarkdownEditingController extends TextEditingController {
               ),
             );
           } else {
-            // Render styled replacement when not focused
             final replacement = RegExp(r'^\d+\.$').hasMatch(bulletOrNumber)
                 ? bulletOrNumber
                 : '•';
@@ -238,8 +403,6 @@ class MarkdownEditingController extends TextEditingController {
               ),
             );
           } else {
-            // Use Unicode horizontal line characters instead of WidgetSpan
-            // This preserves text flow and newline handling
             final lineLength = match.group(0)!.length;
             final lineChars = '─' * lineLength;
             matchSpans.add(
@@ -252,13 +415,152 @@ class MarkdownEditingController extends TextEditingController {
               ),
             );
           }
-        } else if (pattern.type == _PatternType.inline) {
-          // Group 1: Prefix, Group 2: Content, Group 3: Suffix
-          // Note: The regexes for inline need to capture 3 groups: prefix, content, suffix
-          // Check if match has 3 groups. Code block regex has 3 groups.
-          // Bold/Italic previously used non-capturing or different grouping.
-          // I updated regexes above to capture 3 groups.
+        } else if (pattern.type == _PatternType.image) {
+          // Groups: 1=![, 2=alt, 3=](, 4=url, 5=)
+          final exclamationBracket = match.group(1)!;
+          final altText = match.group(2)!;
+          final middle = match.group(3)!;
+          final url = match.group(4)!;
+          final closeParen = match.group(5)!;
 
+          final imageStyle = combinedStyle;
+
+          if (isOnFocusedLine || _focusedLine == null) {
+            // Show full syntax on focused line
+            matchSpans.add(
+              TextSpan(text: exclamationBracket, style: imageStyle),
+            );
+            matchSpans.add(TextSpan(text: altText, style: imageStyle));
+            matchSpans.add(TextSpan(text: middle, style: imageStyle));
+            matchSpans.add(
+              TextSpan(
+                text: url,
+                style: imageStyle.copyWith(color: Colors.teal.shade300),
+              ),
+            );
+            matchSpans.add(TextSpan(text: closeParen, style: imageStyle));
+          } else {
+            // WYSIWYG: hide all syntax, render actual image with spacing
+            matchSpans.add(
+              TextSpan(text: exclamationBracket, style: hiddenStyle),
+            );
+            matchSpans.add(TextSpan(text: altText, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: middle, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: url, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: closeParen, style: hiddenStyle));
+
+            TapGestureRecognizer? imageRecognizer;
+            if (onImageTap != null) {
+              imageRecognizer = TapGestureRecognizer()
+                ..onTap = () => onImageTap!(url);
+              _recognizers.add(imageRecognizer);
+            }
+
+            // Calculate newlines needed based on image height and font size
+            const imageHeight = MarkdownEditingController.imageHeight;
+            final fontSize = defaultStyle.fontSize ?? 16.0;
+            final lineHeight = fontSize * 1.4;
+            final newlinesNeeded = (imageHeight / lineHeight).ceil();
+
+            // Add newlines BEFORE widget to create space above
+            matchSpans.add(
+              TextSpan(text: '\n' * newlinesNeeded, style: defaultStyle),
+            );
+
+            matchSpans.add(
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: GestureDetector(
+                  onTap: onImageTap != null ? () => onImageTap!(url) : null,
+                  child: SizedBox(
+                    height: imageHeight,
+                    width: 300,
+                    child: Image.network(
+                      url,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return SizedBox(
+                          height: imageHeight,
+                          width: 300,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.broken_image,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                altText.isNotEmpty ? altText : 'Image',
+                                style: defaultStyle.copyWith(
+                                  color: Colors.grey,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            // Add newlines AFTER widget to create space below
+            matchSpans.add(
+              TextSpan(text: '\n' * newlinesNeeded, style: defaultStyle),
+            );
+          }
+        } else if (pattern.type == _PatternType.link) {
+          // Groups: 1=[, 2=text, 3=](, 4=url, 5=)
+          final bracket = match.group(1)!;
+          final linkText = match.group(2)!;
+          final middle = match.group(3)!;
+          final url = match.group(4)!;
+          final closeParen = match.group(5)!;
+
+          final linkStyle = combinedStyle;
+
+          TapGestureRecognizer? recognizer;
+          if (onLinkTap != null) {
+            recognizer = TapGestureRecognizer()..onTap = () => onLinkTap!(url);
+            _recognizers.add(recognizer);
+          }
+
+          if (isOnFocusedLine || _focusedLine == null) {
+            matchSpans.add(TextSpan(text: bracket, style: linkStyle));
+            matchSpans.add(
+              TextSpan(
+                text: linkText,
+                style: linkStyle,
+                recognizer: recognizer,
+              ),
+            );
+            matchSpans.add(TextSpan(text: middle, style: linkStyle));
+            matchSpans.add(
+              TextSpan(
+                text: url,
+                style: linkStyle.copyWith(color: Colors.blue.shade300),
+              ),
+            );
+            matchSpans.add(TextSpan(text: closeParen, style: linkStyle));
+          } else {
+            matchSpans.add(TextSpan(text: bracket, style: hiddenStyle));
+            matchSpans.add(
+              TextSpan(
+                text: linkText,
+                style: linkStyle,
+                recognizer: recognizer,
+              ),
+            );
+            matchSpans.add(TextSpan(text: middle, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: url, style: hiddenStyle));
+            matchSpans.add(TextSpan(text: closeParen, style: hiddenStyle));
+          }
+        } else if (pattern.type == _PatternType.inline) {
           if (match.groupCount >= 3) {
             final prefix = match.group(1)!;
             final content = match.group(2)!;
@@ -282,7 +584,6 @@ class MarkdownEditingController extends TextEditingController {
               ),
             );
           } else {
-            // Fallback for unexpected regex behavior
             matchSpans.add(
               TextSpan(text: match.group(0), style: combinedStyle),
             );
@@ -301,11 +602,10 @@ class MarkdownEditingController extends TextEditingController {
       if (startCompare != 0) return startCompare;
       final lengthCompare = b.end.compareTo(a.end);
       if (lengthCompare != 0) return lengthCompare;
-      // Higher priority first
       return b.priority.compareTo(a.priority);
     });
 
-    // Remove overlapping ranges (keep first/longer)
+    // Remove overlapping ranges
     List<_MatchRange> filteredRanges = [];
     int lastEnd = 0;
     for (final range in ranges) {
@@ -316,7 +616,7 @@ class MarkdownEditingController extends TextEditingController {
     }
 
     // Build final spans
-    int textCursor = 0; // Tracks position in original text
+    int textCursor = 0;
 
     for (final range in filteredRanges) {
       if (range.start > textCursor) {
@@ -328,9 +628,7 @@ class MarkdownEditingController extends TextEditingController {
         );
       }
 
-      // Add styled text spans from the range
       spans.addAll(range.spans);
-
       textCursor = range.end;
     }
 
@@ -345,7 +643,7 @@ class MarkdownEditingController extends TextEditingController {
   }
 }
 
-enum _PatternType { header, list, inline, thematicBreak }
+enum _PatternType { header, list, inline, image, link, thematicBreak }
 
 class _MarkdownPattern {
   final RegExp exp;

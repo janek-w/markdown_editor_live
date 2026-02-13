@@ -74,5 +74,63 @@ void main() {
         ),
       );
     });
+
+    testWidgets('Parses image syntax correctly', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                final controller = MarkdownEditingController(
+                  text: 'Before ![alt text](https://example.com/img.png) after',
+                );
+                final span = controller.buildTextSpan(
+                  context: context,
+                  withComposing: false,
+                );
+
+                expect(span, isA<TextSpan>());
+                expect(span.children, isNotEmpty);
+
+                // Should produce: "Before " | image spans | " after"
+                expect(span.children!.length, greaterThanOrEqualTo(3));
+                expect(span.children!.first.toPlainText(), 'Before ');
+
+                return Container();
+              },
+            ),
+          ),
+        ),
+      );
+    });
+
+    testWidgets('Image and link patterns do not conflict', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                final controller = MarkdownEditingController(
+                  text: '![img](http://img.png) and [link](http://link.com)',
+                );
+                final span = controller.buildTextSpan(
+                  context: context,
+                  withComposing: false,
+                );
+
+                final plainText = span.toPlainText();
+                // Both should be present in plain text
+                expect(plainText, contains('img'));
+                expect(plainText, contains('link'));
+
+                return Container();
+              },
+            ),
+          ),
+        ),
+      );
+    });
   });
 }
